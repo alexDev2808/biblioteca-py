@@ -1,0 +1,36 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# ── Entornos virtuales ────────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── PyInstaller ───────────────────────────────────────────────────────────────
+build/
+dist/
+*.spec
+
+# ── PyCharm ───────────────────────────────────────────────────────────────────
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# ── Sistema operativo ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs y temporales ─────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.bak
+
+# ── PDFs de prueba (opcional, comenta si los quieres versionar) ───────────────
+# *.pdf
