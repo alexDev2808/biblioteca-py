@@ -40,6 +40,7 @@ class App(tk.Tk):
         self.archivo_path = None
         self.total_paginas = 0
         self.titulares_por_pagina = []
+        self.indice_titular = 1   # por defecto: segunda aparición
         self._build_ui()
 
     # ── UI ────────────────────────────────────────────────────────────────────
@@ -91,10 +92,31 @@ class App(tk.Tk):
 
         # ── Páginas detectadas ──
         self._section_label(body, "📋  Páginas detectadas (titular extraído)")
-        self.frame_paginas = tk.Frame(body, bg=BG_INPUT, height=80,
-                                      highlightthickness=1, highlightbackground=ACCENT2)
-        self.frame_paginas.pack(fill="x", pady=(4, 14))
-        self.frame_paginas.pack_propagate(False)
+        paginas_outer = tk.Frame(body, bg=BG_INPUT, height=110,
+                                 highlightthickness=1, highlightbackground=ACCENT2)
+        paginas_outer.pack(fill="x", pady=(4, 14))
+        paginas_outer.pack_propagate(False)
+        self.canvas_paginas = tk.Canvas(paginas_outer, bg=BG_INPUT, highlightthickness=0,
+                                        height=110)
+        scroll_pag = tk.Scrollbar(paginas_outer, orient="vertical",
+                                  command=self.canvas_paginas.yview, bg=BG_INPUT)
+        self.canvas_paginas.configure(yscrollcommand=scroll_pag.set)
+        scroll_pag.pack(side="right", fill="y")
+        self.canvas_paginas.pack(side="left", fill="both", expand=True)
+        self.frame_paginas = tk.Frame(self.canvas_paginas, bg=BG_INPUT)
+        self._canvas_window = self.canvas_paginas.create_window(
+            (0, 0), window=self.frame_paginas, anchor="nw"
+        )
+        self.frame_paginas.bind(
+            "<Configure>",
+            lambda e: self.canvas_paginas.configure(
+                scrollregion=self.canvas_paginas.bbox("all")
+            )
+        )
+        self.canvas_paginas.bind(
+            "<Configure>",
+            lambda e: self.canvas_paginas.itemconfig(self._canvas_window, width=e.width)
+        )
         self.lbl_paginas = tk.Label(self.frame_paginas,
                                     text="— Carga un archivo para ver las páginas —",
                                     font=("Segoe UI", 9), bg=BG_INPUT, fg=TEXT_DIM)
@@ -159,25 +181,75 @@ class App(tk.Tk):
     def _normalizar(self, texto):
         return texto.strip().replace(" ", "_")
 
-    def _extraer_titular(self, pagina, razon_social):
-        """
-        Encuentra todos los valores de 'Titular de la cuenta' en la página
-        y devuelve el que NO comparte ninguna palabra con la razón social.
-        """
+    def _extraer_matches_titular(self, pagina):
+        """Devuelve todos los valores encontrados para 'Titular de la cuenta'."""
         texto = pagina.extract_text() or ""
-        matches = re.findall(r"Titular de la cuenta[:\s]*(.+)", texto, re.IGNORECASE)
+        # Dividir el texto en cada aparición del campo; partes[1], [2]... son los valores
+        partes = re.split(r"Titular de la cuenta[:\s]*", texto, flags=re.IGNORECASE)
+        return [p.strip().split("\n")[0].strip() for p in partes[1:] if p.strip()]
 
-        # Palabras de la razón social en mayúsculas para comparar
-        palabras_razon = set(razon_social.upper().split())
+    def _extraer_titular(self, pagina, razon_social):
+        matches = self._extraer_matches_titular(pagina)
+        if not matches:
+            return None
+        idx = min(self.indice_titular, len(matches) - 1)
+        return self._normalizar(matches[idx])
 
-        for match in matches:
-            valor = match.strip().split("\n")[0].strip()
-            palabras_valor = set(valor.upper().split())
-            # Si ninguna palabra coincide → es el titular del cliente
-            if not palabras_valor.intersection(palabras_razon):
-                return self._normalizar(valor)
+    def _elegir_titular(self, reader):
+        """
+        Busca la primera página con 2+ apariciones y muestra un diálogo
+        para que el usuario elija cuál usar. Actualiza self.indice_titular.
+        """
+        opciones = None
+        for pagina in reader.pages:
+            m = self._extraer_matches_titular(pagina)
+            if len(m) >= 2:
+                opciones = m
+                break
 
-        return None
+        if opciones is None:
+            return  # solo una aparición, no hace falta preguntar
+
+        # ── Diálogo modal ───────────────────────────────────────────────
+        dialogo = tk.Toplevel(self)
+        dialogo.title("Seleccionar campo")
+        dialogo.configure(bg=BG_DARK)
+        dialogo.resizable(False, False)
+        dialogo.grab_set()
+
+        tk.Label(dialogo,
+                 text="Se encontraron varios campos 'Titular de la cuenta'.\n"
+                      "Elige cuál usar como nombre de archivo:",
+                 font=("Segoe UI", 10), bg=BG_DARK, fg=TEXT,
+                 justify="left", padx=20, pady=8).pack(pady=(16, 4))
+
+        seleccion = tk.IntVar(value=self.indice_titular)
+
+        for i, opcion in enumerate(opciones[:4]):   # máximo 4 opciones
+            tk.Radiobutton(
+                dialogo,
+                text=f"  [{i+1}]  {opcion}",
+                variable=seleccion, value=i,
+                font=("Segoe UI", 10),
+                bg=BG_DARK, fg=TEXT,
+                activebackground=BG_DARK, activeforeground=ACCENT,
+                selectcolor=BG_INPUT,
+                anchor="w", padx=24
+            ).pack(fill="x", pady=2)
+
+        def confirmar():
+            self.indice_titular = seleccion.get()
+            dialogo.destroy()
+
+        tk.Button(
+            dialogo, text="Confirmar",
+            font=("Segoe UI", 10, "bold"),
+            bg=ACCENT2, fg=TEXT, activebackground=ACCENT,
+            relief="flat", bd=0, padx=20, pady=8,
+            cursor="hand2", command=confirmar
+        ).pack(pady=(12, 16))
+
+        self.wait_window(dialogo)
 
     def _recargar_titulares(self):
         """Re-extrae titulares con la razón social actualmente seleccionada."""
@@ -212,6 +284,7 @@ class App(tk.Tk):
             razon = self.razon_var.get()
             reader = PdfReader(path)
             self.total_paginas = len(reader.pages)
+            self._elegir_titular(reader)
             self.titulares_por_pagina = [self._extraer_titular(p, razon) for p in reader.pages]
             self.lbl_archivo.config(text=f"  {nombre}", fg=TEXT)
             self._mostrar_paginas()
@@ -224,16 +297,12 @@ class App(tk.Tk):
     def _mostrar_paginas(self):
         for w in self.frame_paginas.winfo_children():
             w.destroy()
-        filas = self.total_paginas
-        self.frame_paginas.config(height=max(80, 26 * filas + 16))
-        wrap = tk.Frame(self.frame_paginas, bg=BG_INPUT)
-        wrap.pack(fill="both", expand=True, padx=8, pady=8)
         for i in range(self.total_paginas):
             titular = self.titulares_por_pagina[i] or "⚠️ No encontrado"
-            tk.Label(wrap, text=f"Pág {i+1}:", font=("Segoe UI", 8, "bold"),
-                     bg=BG_INPUT, fg=ACCENT, padx=4).grid(row=i, column=0, sticky="w")
-            tk.Label(wrap, text=titular, font=("Segoe UI", 8),
-                     bg=BG_INPUT, fg=TEXT_DIM).grid(row=i, column=1, sticky="w", padx=(4, 0))
+            tk.Label(self.frame_paginas, text=f"Pág {i+1}:", font=("Segoe UI", 8, "bold"),
+                     bg=BG_INPUT, fg=ACCENT, padx=8).grid(row=i, column=0, sticky="w", pady=2)
+            tk.Label(self.frame_paginas, text=titular, font=("Segoe UI", 8),
+                     bg=BG_INPUT, fg=TEXT_DIM).grid(row=i, column=1, sticky="w", padx=(0, 8))
 
     def _update_preview(self):
         if not self.total_paginas:
